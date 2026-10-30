@@ -2870,7 +2870,7 @@
         <div class="pt-3 border-t border-gray-100 dark:border-dark-700">
           <div class="flex items-center justify-between gap-4">
             <div class="min-w-0">
-              <label class="input-label mb-0 cursor-pointer" @click="autoResetCreditEnabled && (autoResetCreditExpiringEnabled = !autoResetCreditExpiringEnabled)">
+              <label class="input-label mb-0 cursor-pointer" @click="autoResetCreditExpiringEnabled = !autoResetCreditExpiringEnabled">
                 {{ t('admin.accounts.autoResetCredit.expiringTitle') }}
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -2880,7 +2880,6 @@
             <Toggle
               v-model="autoResetCreditExpiringEnabled"
               data-testid="auto-reset-credit-expiring-enabled"
-              :disabled="!autoResetCreditEnabled"
               :aria-label="t('admin.accounts.autoResetCredit.expiringTitle')"
             />
           </div>
@@ -2893,7 +2892,7 @@
               max="168"
               step="1"
               class="input max-w-xs"
-              :disabled="!autoResetCreditEnabled || !autoResetCreditExpiringEnabled"
+              :disabled="!autoResetCreditExpiringEnabled"
               data-testid="auto-reset-credit-expiring-hours"
             />
             <p class="input-hint">{{ t('admin.accounts.autoResetCredit.expiringHoursHint') }}</p>
@@ -5685,12 +5684,12 @@ const handleSubmit = async () => {
 			appStore.showError(t('admin.accounts.autoResetCredit.thresholdInvalid'))
 			return
 		}
-		if (autoResetCreditExpiringEnabled.value) {
-			const hours = autoResetCreditExpiringHours.value
-			if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
-				appStore.showError(t('admin.accounts.autoResetCredit.expiringHoursInvalid'))
-				return
-			}
+	}
+	if (autoResetCreditExpiringEnabled.value) {
+		const hours = autoResetCreditExpiringHours.value
+		if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+			appStore.showError(t('admin.accounts.autoResetCredit.expiringHoursInvalid'))
+			return
 		}
 	}
 

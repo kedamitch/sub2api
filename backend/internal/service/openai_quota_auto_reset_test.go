@@ -577,3 +577,61 @@ func TestOpenAIQuotaAutoResetService_ExpiringCreditTriggersReset(t *testing.T) {
 	require.Equal(t, OpenAIAutoResetStatusSuccess, state.Status)
 	require.Contains(t, state.TriggerWindow, "expiring", "TriggerWindow 应标明 expiring 来源")
 }
+
+func TestOpenAIQuotaAutoResetService_ExpiringCreditIndependentOfUsageReset(t *testing.T) {
+	now := time.Now().UTC()
+	expiringAt := now.Add(6 * time.Hour).Format(time.RFC3339)
+
+	account := &Account{
+		ID: 602, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{
+			// 阈值自动用卡关闭，仅快到期自动用卡开启
+			OpenAIAutoResetCreditEnabledExtraKey:         false,
+			OpenAIAutoResetCreditExpiringEnabledExtraKey: true,
+			OpenAIAutoResetCreditExpiringHoursExtraKey:   12,
+			"codex_5h_used_percent":                      10.0,
+			"codex_7d_used_percent":                      10.0,
+			"codex_usage_updated_at":                     now.Format(time.RFC3339),
+			"codex_reset_credit_snapshot": &OpenAIRateLimitResetCredits{
+				AvailableCount: 1,
+				Credits: []OpenAIRateLimitResetCreditDetail{
+					{ExpiresAt: expiringAt},
+				},
+			},
+		},
+	}
+	repo := &autoResetTestAccountRepo{account: account}
+	quota := &autoResetTestQuota{
+		usage: &OpenAIQuotaUsage{
+			FetchedAt: now.Unix(),
+			RateLimit: &OpenAIRateLimit{
+				PrimaryWindow:   &OpenAIRateLimitWindow{UsedPercent: 10, LimitWindowSeconds: 5 * 3600, ResetAfterSeconds: 3600, ResetAt: now.Add(time.Hour).Unix()},
+				SecondaryWindow: &OpenAIRateLimitWindow{UsedPercent: 10, LimitWindowSeconds: 7 * 86400, ResetAfterSeconds: 86400, ResetAt: now.Add(24 * time.Hour).Unix()},
+			},
+			RateLimitResetCredits: &OpenAIRateLimitResetCredits{
+				AvailableCount: 1,
+				Credits: []OpenAIRateLimitResetCreditDetail{
+					{ExpiresAt: expiringAt},
+				},
+			},
+			autoResetCandidates: []openAIAutoResetCreditCandidate{
+				{ID: "credit-expiring", ExpiresAt: expiringAt},
+			},
+		},
+	}
+	idempotencyConfig := DefaultIdempotencyConfig()
+	idempotencyConfig.ObserveOnly = false
+	service := NewOpenAIQuotaAutoResetService(
+		repo,
+		quota,
+		autoResetTestRecoverer{},
+		NewIdempotencyCoordinator(newInMemoryIdempotencyRepo(), idempotencyConfig),
+		nil, nil, nil,
+	)
+
+	err := service.evaluateAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, int32(1), quota.resetCalls.Load(), "即使未开启用量重置，快到期卡片也应独立触发")
+}

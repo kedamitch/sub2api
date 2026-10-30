@@ -118,11 +118,9 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 		normalized[key] = value
 	}
 	if !hasExpiringEnabled {
-		if enabled {
-			normalized[OpenAIAutoResetCreditExpiringEnabledExtraKey] = true
-			if !hasExpiringHours {
-				normalized[OpenAIAutoResetCreditExpiringHoursExtraKey] = openAIAutoResetCreditDefaultExpiringHours
-			}
+		normalized[OpenAIAutoResetCreditExpiringEnabledExtraKey] = true
+		if !hasExpiringHours {
+			normalized[OpenAIAutoResetCreditExpiringHoursExtraKey] = openAIAutoResetCreditDefaultExpiringHours
 		}
 	} else {
 		value, ok := normalized[OpenAIAutoResetCreditExpiringEnabledExtraKey].(bool)

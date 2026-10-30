@@ -1973,6 +1973,48 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+
+  it('额度耗尽自动用卡关闭时，快到期自动用卡仍可独立开启并编辑保存', async () => {
+    const account = buildOpenAIOAuthParentAccount({
+      auto_reset_credit_enabled: false,
+      auto_reset_credit_expiring_enabled: true,
+      auto_reset_credit_expiring_hours: 1
+    })
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+
+    const expiringToggle = wrapper.get('[data-testid="auto-reset-credit-expiring-enabled"]')
+    expect(expiringToggle.attributes('disabled')).toBeUndefined()
+
+    const hoursInput = wrapper.get('[data-testid="auto-reset-credit-expiring-hours"]')
+    expect(hoursInput.attributes('disabled')).toBeUndefined()
+    await hoursInput.setValue('48')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({
+      auto_reset_credit_enabled: false,
+      auto_reset_credit_expiring_enabled: true,
+      auto_reset_credit_expiring_hours: 48
+    })
+    wrapper.unmount()
+  })
+
+  it('关闭快到期自动用卡时，小时数输入框被禁用', async () => {
+    const account = buildOpenAIOAuthParentAccount({
+      auto_reset_credit_enabled: false,
+      auto_reset_credit_expiring_enabled: true,
+      auto_reset_credit_expiring_hours: 1
+    })
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="auto-reset-credit-expiring-enabled"]').trigger('click')
+    const hoursInput = wrapper.get('[data-testid="auto-reset-credit-expiring-hours"]')
+    expect(hoursInput.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
 })
 
 describe('EditAccountModal gemini explicit cache upstream switch', () => {
