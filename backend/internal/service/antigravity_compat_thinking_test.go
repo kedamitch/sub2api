@@ -76,14 +76,14 @@ func TestConvertClaudeToolUseReplaysCachedThoughtSignature(t *testing.T) {
 	antigravity.CacheToolThoughtSignature(toolID, "sig-replayed")
 
 	body := []byte(`{"max_tokens":1024,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"` + toolID + `","name":"bash","input":{"cmd":"ls"}}]}]}`)
-	out, err := convertClaudeMessagesToGeminiGenerateContent(body)
+	out, err := convertClaudeMessagesToGeminiGenerateContent(body, "gemini-3.8-flash")
 	require.NoError(t, err)
 	require.Equal(t, "sig-replayed", gjson.GetBytes(out, "contents.0.parts.0.thoughtSignature").String())
 }
 
 func TestConvertClaudeToolUseFallsBackToDummySignature(t *testing.T) {
 	body := []byte(`{"max_tokens":1024,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"call-no-cache-1","name":"bash","input":{"cmd":"ls"}}]}]}`)
-	out, err := convertClaudeMessagesToGeminiGenerateContent(body)
+	out, err := convertClaudeMessagesToGeminiGenerateContent(body, "gemini-3.8-flash")
 	require.NoError(t, err)
 	require.Equal(t, geminiDummyThoughtSignature, gjson.GetBytes(out, "contents.0.parts.0.thoughtSignature").String())
 }

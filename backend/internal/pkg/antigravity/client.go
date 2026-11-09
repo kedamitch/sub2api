@@ -689,39 +689,6 @@ type FetchAvailableModelsRequest struct {
 	Project string `json:"project,omitempty"`
 }
 
-// QuotaSummaryRequest retrieveUserQuotaSummary 请求（与 fetchAvailableModels 同构）。
-type QuotaSummaryRequest struct {
-	Project string `json:"project,omitempty"`
-}
-
-// QuotaSummaryBucket 官方配额摘要中的单个配额桶（5h / weekly）。
-type QuotaSummaryBucket struct {
-	BucketID          string   `json:"bucketId,omitempty"`
-	Window            string   `json:"window,omitempty"`
-	RemainingFraction *float64 `json:"remainingFraction,omitempty"`
-	RemainingAmount   int64    `json:"remainingAmount,omitempty"`
-	// Disabled 表示该窗口当前不生效：周配额耗尽时上游会把对应的 5h 桶
-	// 置为 disabled=true 且 remainingFraction=1，必须跳过以免展示成 0% 已用。
-	Disabled    bool   `json:"disabled,omitempty"`
-	ResetTime   string `json:"resetTime,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
-	Description string `json:"description,omitempty"`
-}
-
-// QuotaSummaryGroup 官方配额摘要中的模型组（如 Gemini Models / Claude and GPT models）。
-type QuotaSummaryGroup struct {
-	DisplayName string               `json:"displayName,omitempty"`
-	Description string               `json:"description,omitempty"`
-	Buckets     []QuotaSummaryBucket `json:"buckets,omitempty"`
-}
-
-// QuotaSummaryResponse retrieveUserQuotaSummary 响应。
-// buckets 与 groups 可能同时存在，调用方需要合并两者。
-type QuotaSummaryResponse struct {
-	Buckets []QuotaSummaryBucket `json:"buckets,omitempty"`
-	Groups  []QuotaSummaryGroup  `json:"groups,omitempty"`
-}
-
 // FetchAvailableModelsResponse fetchAvailableModels 响应
 type FetchAvailableModelsResponse struct {
 	Models             map[string]ModelInfo           `json:"models"`
@@ -870,87 +837,6 @@ func isAllowedFetchAvailableModelsRedirectHost(host string) bool {
 		}
 	}
 	return false
-}
-
-// ── Quota Summary API ────────────────────────────────────────────────
-
-// RetrieveUserQuotaSummary 获取官方按模型组聚合的 5h / weekly 配额摘要。
-func (c *Client) RetrieveUserQuotaSummary(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*QuotaSummaryResponse, error) {
-	return c.RetrieveUserQuotaSummaryWithURLs(ctx, BaseURLs, accessToken, projectID, bodyLimit)
-}
-
-// RetrieveUserQuotaSummaryWithURLs 使用指定的有序端点队列获取配额摘要。
-//
-// retrieveUserQuotaSummary 是 Google One / AI Pro 账号真实用量的唯一来源：
-// fetchAvailableModels 的 quotaInfo.remainingFraction 对免费与付费账号恒为 1，
-// 只有本接口返回的 5h / weekly 桶会随实际调用下降。
-func (c *Client) RetrieveUserQuotaSummaryWithURLs(ctx context.Context, baseURLs []string, accessToken, projectID string, bodyLimit int64) (*QuotaSummaryResponse, error) {
-	if c == nil || c.httpClient == nil {
-		return nil, errors.New("antigravity client is not configured")
-	}
-	if bodyLimit <= 0 {
-		return nil, errors.New("retrieveUserQuotaSummary body limit must be positive")
-	}
-	if len(baseURLs) == 0 {
-		return nil, errors.New("retrieveUserQuotaSummary base URLs are required")
-	}
-
-	reqBody := QuotaSummaryRequest{Project: projectID}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
-	}
-
-	var lastErr error
-	for urlIdx, baseURL := range baseURLs {
-		apiURL := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/v1internal:retrieveUserQuotaSummary"
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
-		if err != nil {
-			lastErr = fmt.Errorf("创建请求失败: %w", err)
-			continue
-		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
-
-		resp, err := servertiming.Do(c.httpClient, req)
-		if err != nil {
-			lastErr = fmt.Errorf("retrieveUserQuotaSummary 请求失败: %w", err)
-			if shouldFallbackToNextURL(err, 0) && urlIdx < len(baseURLs)-1 {
-				log.Printf("[antigravity] retrieveUserQuotaSummary URL fallback: %s -> %s", baseURL, baseURLs[urlIdx+1])
-				continue
-			}
-			return nil, lastErr
-		}
-
-		respBodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
-		_ = resp.Body.Close() // 立即关闭，避免循环内 defer 导致的资源泄漏
-		if err != nil {
-			return nil, fmt.Errorf("读取响应失败: %w", err)
-		}
-		if int64(len(respBodyBytes)) > bodyLimit {
-			return nil, fmt.Errorf("响应超过 %d 字节", bodyLimit)
-		}
-
-		if shouldFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(baseURLs)-1 {
-			log.Printf("[antigravity] retrieveUserQuotaSummary URL fallback (HTTP %d): %s -> %s", resp.StatusCode, baseURL, baseURLs[urlIdx+1])
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("retrieveUserQuotaSummary 失败 (HTTP %d): %s", resp.StatusCode, string(respBodyBytes))
-		}
-
-		var summaryResp QuotaSummaryResponse
-		if err := json.Unmarshal(respBodyBytes, &summaryResp); err != nil {
-			return nil, fmt.Errorf("响应解析失败: %w", err)
-		}
-
-		DefaultURLAvailability.MarkSuccess(baseURL)
-		return &summaryResp, nil
-	}
-
-	return nil, lastErr
 }
 
 // ── Privacy API ──────────────────────────────────────────────────────
