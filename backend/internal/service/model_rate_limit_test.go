@@ -230,6 +230,9 @@ func TestIsModelRateLimited(t *testing.T) {
 			name: "antigravity platform - argon rate limit does not block gemini-3.8-flash",
 			account: &Account{
 				Platform: PlatformAntigravity,
+				Credentials: map[string]any{
+					"plan_type": "Pro",
+				},
 				Extra: map[string]any{
 					modelRateLimitsKey: map[string]any{
 						"gemini-4-argon-high": map[string]any{
@@ -248,6 +251,9 @@ func TestIsModelRateLimited(t *testing.T) {
 			name: "antigravity platform - argon family key blocks argon variants",
 			account: &Account{
 				Platform: PlatformAntigravity,
+				Credentials: map[string]any{
+					"plan_type": "Pro",
+				},
 				Extra: map[string]any{
 					modelRateLimitsKey: map[string]any{
 						antigravityArgonModelRateLimitKey: map[string]any{
@@ -263,6 +269,9 @@ func TestIsModelRateLimited(t *testing.T) {
 			name: "antigravity platform - gemini family key does not block argon",
 			account: &Account{
 				Platform: PlatformAntigravity,
+				Credentials: map[string]any{
+					"plan_type": "Pro",
+				},
 				Extra: map[string]any{
 					modelRateLimitsKey: map[string]any{
 						antigravityGeminiModelRateLimitKey: map[string]any{

@@ -869,7 +869,13 @@ func TestSetAntigravityModelRateLimits_ImageDoesNotWriteFamilyScope(t *testing.T
 func TestSetAntigravityModelRateLimits_ArgonWritesArgonFamilyScopeNotGemini(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{}
-	account := &Account{ID: 789, Platform: PlatformAntigravity}
+	account := &Account{
+		ID:       789,
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"plan_type": "Pro",
+		},
+	}
 	resetAt := time.Now().Add(7 * 24 * time.Hour)
 
 	success := svc.setAntigravityModelRateLimits(
