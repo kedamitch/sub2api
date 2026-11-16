@@ -127,6 +127,14 @@ func TestDefaultAntigravityModelMapping_Gemini4ArgonAndClaude55Models(t *testing
 	}
 }
 
+func TestDefaultAntigravityModelMapping_FlashLiteFallbackToFlash(t *testing.T) {
+	t.Parallel()
+
+	if got := DefaultAntigravityModelMapping["gemini-2.5-flash-lite"]; got != "gemini-2.5-flash" {
+		t.Fatalf("expected gemini-2.5-flash-lite to map to gemini-2.5-flash, got %q", got)
+	}
+}
+
 func TestDefaultBedrockModelMapping_ContainsNewClaudeModels(t *testing.T) {
 	t.Parallel()
 

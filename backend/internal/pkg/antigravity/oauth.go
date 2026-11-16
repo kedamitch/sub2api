@@ -123,7 +123,7 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
 	return defaultUserAgentVersion
 }
 
-// BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
+// BuildUserAgent 使用指定版本号构造旧版 Hub User-Agent（legacy helper）；版本为空或非法时回退默认值。
 func BuildUserAgent(version string) string {
 	if normalized := NormalizeUserAgentVersion(version); normalized != "" {
 		return fmt.Sprintf("antigravity/hub/%s windows/amd64", normalized)
@@ -148,7 +148,7 @@ func BuildOfficialHubUserAgent(version, osType, arch string) string {
 
 // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
 func GetUserAgentForContext(ctx context.Context) string {
-	return BuildUserAgent(GetUserAgentVersionForContext(ctx))
+	return BuildOfficialHubUserAgent(GetUserAgentVersionForContext(ctx), "", "")
 }
 
 // GetUserAgent 返回当前配置的 User-Agent。

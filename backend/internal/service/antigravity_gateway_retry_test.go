@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -27,8 +27,8 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 		antigravity.BaseURLs = origBaseURLs
 	}()
 
-	t.Run("Paid account returns daily first then prod", func(t *testing.T) {
-		_ = os.Unsetenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL")
+	t.Run("Paid pro account returns daily only", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
 		account := &Account{
 			ID:       1,
 			Platform: PlatformAntigravity,
@@ -38,15 +38,29 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 		}
 
 		urls := resolveAntigravityForwardBaseURLs(account)
-		require.Len(t, urls, 2)
+		require.Len(t, urls, 1)
 		assert.Equal(t, dailyURL, urls[0])
-		assert.Equal(t, prodURL, urls[1])
 	})
 
-	t.Run("Google One g1-pro-tier account returns daily first", func(t *testing.T) {
-		_ = os.Unsetenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL")
+	t.Run("Paid ultra account returns daily only", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
 		account := &Account{
 			ID:       2,
+			Platform: PlatformAntigravity,
+			Credentials: map[string]any{
+				"plan_type": "ultra",
+			},
+		}
+
+		urls := resolveAntigravityForwardBaseURLs(account)
+		require.Len(t, urls, 1)
+		assert.Equal(t, dailyURL, urls[0])
+	})
+
+	t.Run("Google One g1-pro-tier account returns daily only", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
+		account := &Account{
+			ID:       3,
 			Platform: PlatformAntigravity,
 			Credentials: map[string]any{
 				"plan_type": "g1-pro-tier",
@@ -54,15 +68,44 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 		}
 
 		urls := resolveAntigravityForwardBaseURLs(account)
-		require.Len(t, urls, 2)
+		require.Len(t, urls, 1)
 		assert.Equal(t, dailyURL, urls[0])
-		assert.Equal(t, prodURL, urls[1])
+	})
+
+	t.Run("Google One g1-ultra-lite-tier account returns daily only", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
+		account := &Account{
+			ID:       4,
+			Platform: PlatformAntigravity,
+			Credentials: map[string]any{
+				"plan_type": "g1-ultra-lite-tier",
+			},
+		}
+
+		urls := resolveAntigravityForwardBaseURLs(account)
+		require.Len(t, urls, 1)
+		assert.Equal(t, dailyURL, urls[0])
+	})
+
+	t.Run("Paid account with daily override still returns daily only", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "daily")
+		account := &Account{
+			ID:       5,
+			Platform: PlatformAntigravity,
+			Credentials: map[string]any{
+				"plan_type": "g1-pro-tier",
+			},
+		}
+
+		urls := resolveAntigravityForwardBaseURLs(account)
+		require.Len(t, urls, 1)
+		assert.Equal(t, dailyURL, urls[0])
 	})
 
 	t.Run("Free account returns prod only", func(t *testing.T) {
-		_ = os.Unsetenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL")
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
 		account := &Account{
-			ID:       3,
+			ID:       6,
 			Platform: PlatformAntigravity,
 			Credentials: map[string]any{
 				"plan_type": "free",
@@ -74,12 +117,11 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 		assert.Equal(t, prodURL, urls[0])
 	})
 
-	t.Run("Environment override daily", func(t *testing.T) {
-		_ = os.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "daily")
-		defer os.Unsetenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL")
+	t.Run("Environment override daily for free account", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "daily")
 
 		account := &Account{
-			ID:       4,
+			ID:       7,
 			Platform: PlatformAntigravity,
 			Credentials: map[string]any{
 				"plan_type": "free",
@@ -93,11 +135,10 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 	})
 
 	t.Run("Environment override prod", func(t *testing.T) {
-		_ = os.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "prod")
-		defer os.Unsetenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL")
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "prod")
 
 		account := &Account{
-			ID:       5,
+			ID:       8,
 			Platform: PlatformAntigravity,
 			Credentials: map[string]any{
 				"plan_type": "pro",
@@ -112,23 +153,6 @@ func TestResolveAntigravityForwardBaseURLs(t *testing.T) {
 
 func TestAntigravityRetryLoop_URLFallbackOn404(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-
-	mockUpstream := &mockSmartRetryUpstream{
-		responses: []*http.Response{
-			{
-				StatusCode: http.StatusNotFound,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))),
-			},
-			{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(bytes.NewReader([]byte(`{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`))),
-			},
-		},
-		errors: []error{nil, nil},
-	}
 
 	dailyURL := "https://daily-cloudcode-pa.googleapis.com"
 	prodURL := "https://cloudcode-pa.googleapis.com"
@@ -138,35 +162,168 @@ func TestAntigravityRetryLoop_URLFallbackOn404(t *testing.T) {
 		antigravity.BaseURLs = origBaseURLs
 	}()
 
-	svc := &AntigravityGatewayService{}
-	account := &Account{
-		ID:       10,
-		Platform: PlatformAntigravity,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"plan_type": "pro",
-		},
-	}
+	t.Run("Free account with daily override falls back from daily to prod on 404", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "daily")
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 
-	params := antigravityRetryLoopParams{
-		ctx:            context.Background(),
-		prefix:         "[test]",
-		account:        account,
-		accessToken:    "test-token",
-		action:         "v1internal:generateContent",
-		body:           []byte(`{"model":"gemini-3.7-flash"}`),
-		c:              c,
-		httpUpstream:   mockUpstream,
-		requestedModel: "gemini-3.7-flash",
-		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
-			return nil
-		},
-	}
+		mockUpstream := &mockSmartRetryUpstream{
+			responses: []*http.Response{
+				{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))),
+				},
+				{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte(`{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`))),
+				},
+			},
+			errors: []error{nil, nil},
+		}
 
-	result, err := svc.antigravityRetryLoop(params)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, result.resp)
-	assert.Equal(t, http.StatusOK, result.resp.StatusCode)
-	assert.Len(t, mockUpstream.calls, 2)
+		svc := &AntigravityGatewayService{}
+		account := &Account{
+			ID:       10,
+			Platform: PlatformAntigravity,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"plan_type": "free",
+			},
+		}
+
+		params := antigravityRetryLoopParams{
+			ctx:            context.Background(),
+			prefix:         "[test]",
+			account:        account,
+			accessToken:    "test-token",
+			action:         "v1internal:generateContent",
+			body:           []byte(`{"model":"gemini-3.7-flash"}`),
+			c:              c,
+			httpUpstream:   mockUpstream,
+			requestedModel: "gemini-3.7-flash",
+			handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+				return nil
+			},
+		}
+
+		result, err := svc.antigravityRetryLoop(params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.resp)
+		assert.Equal(t, http.StatusOK, result.resp.StatusCode)
+		require.Len(t, mockUpstream.calls, 2)
+		assert.True(t, strings.HasPrefix(mockUpstream.calls[0], dailyURL))
+		assert.True(t, strings.HasPrefix(mockUpstream.calls[1], prodURL))
+	})
+
+	t.Run("Paid g1-pro-tier account does not fall back to prod on 404", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+		mockUpstream := &mockSmartRetryUpstream{
+			responses: []*http.Response{
+				{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"code":404,"message":"Requested entity was not found."}}`))),
+				},
+				{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte(`{"candidates":[{"content":{"parts":[{"text":"unexpected"}]}}]}`))),
+				},
+			},
+			errors: []error{nil, nil},
+		}
+
+		svc := &AntigravityGatewayService{}
+		account := &Account{
+			ID:       11,
+			Platform: PlatformAntigravity,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"plan_type": "g1-pro-tier",
+			},
+		}
+
+		params := antigravityRetryLoopParams{
+			ctx:            context.Background(),
+			prefix:         "[test]",
+			account:        account,
+			accessToken:    "test-token",
+			action:         "v1internal:generateContent",
+			body:           []byte(`{"model":"gemini-3.7-flash"}`),
+			c:              c,
+			httpUpstream:   mockUpstream,
+			requestedModel: "gemini-3.7-flash",
+			handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+				return nil
+			},
+		}
+
+		result, err := svc.antigravityRetryLoop(params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.resp)
+		assert.Equal(t, http.StatusNotFound, result.resp.StatusCode)
+		require.Len(t, mockUpstream.calls, 1)
+		assert.True(t, strings.HasPrefix(mockUpstream.calls[0], dailyURL))
+	})
+
+	t.Run("Paid pro account does not fall back to prod on URL-level 429", func(t *testing.T) {
+		t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+		mockUpstream := &mockSmartRetryUpstream{
+			responses: []*http.Response{
+				{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte(`{"error":{"code":429,"message":"Resource has been exhausted"}}`))),
+				},
+			},
+			errors:     []error{nil},
+			repeatLast: true,
+		}
+
+		var handleErrorCalled bool
+		svc := &AntigravityGatewayService{}
+		account := &Account{
+			ID:       12,
+			Platform: PlatformAntigravity,
+			Type:     AccountTypeOAuth,
+			Credentials: map[string]any{
+				"plan_type": "pro",
+			},
+		}
+
+		params := antigravityRetryLoopParams{
+			ctx:            context.Background(),
+			prefix:         "[test]",
+			account:        account,
+			accessToken:    "test-token",
+			action:         "v1internal:generateContent",
+			body:           []byte(`{"model":"gemini-3.7-flash"}`),
+			c:              c,
+			httpUpstream:   mockUpstream,
+			requestedModel: "gemini-3.7-flash",
+			handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+				handleErrorCalled = true
+				return nil
+			},
+		}
+
+		result, err := svc.antigravityRetryLoop(params)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.resp)
+		assert.Equal(t, http.StatusTooManyRequests, result.resp.StatusCode)
+		assert.True(t, handleErrorCalled)
+		require.Len(t, mockUpstream.calls, antigravityMaxRetries)
+		for _, callURL := range mockUpstream.calls {
+			assert.True(t, strings.HasPrefix(callURL, dailyURL))
+			assert.False(t, strings.HasPrefix(callURL, prodURL))
+		}
+	})
 }

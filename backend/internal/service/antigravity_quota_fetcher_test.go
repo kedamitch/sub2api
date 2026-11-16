@@ -603,7 +603,9 @@ func TestFetchQuota_PaidPlanUsesDailyAndParsesNonZeroQuota(t *testing.T) {
 	}))
 	defer dailyServer.Close()
 
+	prodHits := 0
 	prodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prodHits++
 		switch r.URL.Path {
 		case "/v1internal:fetchAvailableModels":
 			_, _ = w.Write([]byte(prodModels))
@@ -628,7 +630,7 @@ func TestFetchQuota_PaidPlanUsesDailyAndParsesNonZeroQuota(t *testing.T) {
 	cfg := &config.Config{}
 	fetcher := NewAntigravityQuotaFetcher(nil, cfg)
 
-	// 1. 付费账号（Pro）：应当优先使用 dailyServer，获取到 20% / 25% 的使用率
+	// 1. 付费账号（Pro）：应当仅使用 dailyServer，获取到 20% / 25% 的使用率
 	paidAccount := &Account{
 		Platform: PlatformAntigravity,
 		Type:     AccountTypeOAuth,
@@ -640,6 +642,7 @@ func TestFetchQuota_PaidPlanUsesDailyAndParsesNonZeroQuota(t *testing.T) {
 	}
 	res, err := fetcher.FetchQuota(context.Background(), paidAccount, "")
 	require.NoError(t, err)
+	require.Zero(t, prodHits)
 	require.NotNil(t, res)
 	require.NotNil(t, res.UsageInfo)
 

@@ -58,12 +58,12 @@ func resolveAntigravityForwardBaseURL(account *Account) string {
 // resolveAntigravityForwardBaseURLs 解析按容灾优先级排序的转发用 base URLs 列表。
 //
 // 策略规则：
-// 1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL (daily/prod) 优先级最高，调整首选端点。
-// 2. 未设置环境变量时：
-//   - 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
-//     优先 daily 端点以享受完整模型配额与权益，并以 prod 作为容灾兜底端点 [daily, prod]。
-//   - 免费账号：
-//     优先 prod 端点避免 OAuth token 产生 401 认证失效，并以 daily 作为容灾备用端点 [prod, daily]。
+// 1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=prod 优先级最高，返回 [prod]。
+// 2. 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
+//    仅使用 daily 端点 [daily]，不回退已下线的 prod 端点。
+// 3. 免费/非付费账号：
+//   - GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily/sandbox 时返回 [daily, prod]。
+//   - 默认返回 [prod]。
 func resolveAntigravityForwardBaseURLs(account *Account) []string {
 	baseURLs := antigravity.BaseURLs
 	if len(baseURLs) == 0 {
@@ -77,14 +77,14 @@ func resolveAntigravityForwardBaseURLs(account *Account) []string {
 	dailyURL := baseURLs[1]
 
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv(antigravityForwardBaseURLEnv)))
-	if mode == "daily" || mode == "sandbox" {
-		return []string{dailyURL, prodURL}
-	}
 	if mode == "prod" {
 		return []string{prodURL}
 	}
 
 	if accountHasAntigravityPaidTier(account) {
+		return []string{dailyURL}
+	}
+	if mode == "daily" || mode == "sandbox" {
 		return []string{dailyURL, prodURL}
 	}
 	return []string{prodURL}

@@ -197,7 +197,16 @@ describe('useModelWhitelist', () => {
     const models = getModelsByPlatform('antigravity')
 
     expect(models.indexOf('gemini-3.1-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash'))
-    expect(models.indexOf('gemini-2.5-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash-lite'))
+    expect(models.indexOf('gemini-2.5-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash'))
+  })
+
+  it('antigravity 默认模型与预设映射不再包含 gemini-2.5-flash-lite', () => {
+    expect(getModelsByPlatform('antigravity')).not.toContain('gemini-2.5-flash-lite')
+    expect(
+      getPresetMappingsByPlatform('antigravity').some(
+        mapping => mapping.from === 'gemini-2.5-flash-lite' || mapping.to === 'gemini-2.5-flash-lite'
+      )
+    ).toBe(false)
   })
 
   it('antigravity 模型列表包含 Gemini 3.1 Pro 通用别名', () => {
