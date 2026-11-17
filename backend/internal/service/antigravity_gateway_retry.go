@@ -58,12 +58,12 @@ func resolveAntigravityForwardBaseURL(account *Account) string {
 // resolveAntigravityForwardBaseURLs 解析按容灾优先级排序的转发用 base URLs 列表。
 //
 // 策略规则：
-// 1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=prod 优先级最高，返回 [prod]。
-// 2. 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
-//    仅使用 daily 端点 [daily]，不回退已下线的 prod 端点。
-// 3. 免费/非付费账号：
-//   - GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily/sandbox 时返回 [daily, prod]。
-//   - 默认返回 [prod]。
+//  1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=prod 优先级最高，返回 [prod]。
+//  2. 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
+//     仅使用 daily 端点 [daily]，不回退已下线的 prod 端点。
+//  3. 免费/非付费账号：
+//     - GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily/sandbox 时返回 [daily, prod]。
+//     - 默认返回 [prod]。
 func resolveAntigravityForwardBaseURLs(account *Account) []string {
 	baseURLs := antigravity.BaseURLs
 	if len(baseURLs) == 0 {
@@ -121,6 +121,22 @@ type smartRetryResult struct {
 // handleSmartRetry 处理 OAuth 账号的智能重试逻辑
 // 将 429/503 限流处理逻辑抽取为独立函数，减少 antigravityRetryLoop 的复杂度
 func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParams, resp *http.Response, respBody []byte, baseURL string, urlIdx int, availableURLs []string) *smartRetryResult {
+	// 合成指纹 429：上游按 systemInstruction 字面拒绝，不是真实配额/容量问题。
+	// 重试、切换 URL、写模型限流都不会改变结果，直接结束重试并把响应交给调用方；
+	// handleUpstreamError 用同一指纹判断跳过冷却，避免一次请求放大成整个模型 1 分钟限流。
+	if isGeminiDeterministic429(resp.StatusCode, p.requestedModel, respBody) {
+		logger.LegacyPrintf("service.antigravity_gateway", "%s status=429 gemini_deterministic_429 model=%s account=%d (skip retry/cooldown)",
+			p.prefix, p.requestedModel, p.account.ID)
+		return &smartRetryResult{
+			action: smartRetryActionBreakWithResp,
+			resp: &http.Response{
+				StatusCode: resp.StatusCode,
+				Header:     resp.Header.Clone(),
+				Body:       io.NopCloser(bytes.NewReader(respBody)),
+			},
+		}
+	}
+
 	// "Resource has been exhausted" 是 URL 级别限流，切换 URL（仅 429）
 	if resp.StatusCode == http.StatusTooManyRequests && isURLLevelRateLimit(respBody) && urlIdx < len(availableURLs)-1 {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s URL fallback (429): %s -> %s", p.prefix, baseURL, availableURLs[urlIdx+1])
@@ -760,6 +776,33 @@ func isURLLevelRateLimit(body []byte) bool {
 		!strings.Contains(bodyStr, "capacity on this model")
 }
 
+// geminiDeterministic429Message 是 Cloud Code Assist 对 systemInstruction 字面指纹返回的
+// 合成 429 的固定 message。真实配额 429 也会出现 "Resource has been exhausted"，
+// 但通常带 details（QuotaFailure/RetryInfo）；合成响应没有 details，且固定带
+// "(e.g. check quota)" 后缀，因此用这两个特征一起判定，避免误伤真实配额错误。
+const geminiDeterministic429Message = "Resource has been exhausted (e.g. check quota)."
+
+// isGeminiRequestModel 判断请求模型是否属于 Gemini 系列。
+// 该指纹短路只对 Gemini 生效，Claude 等其他系列保持原有重试/限流行为。
+func isGeminiRequestModel(model string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "gemini")
+}
+
+// isGeminiDeterministic429Fingerprint 判断响应是否为 systemInstruction 字面指纹触发的合成 429。
+func isGeminiDeterministic429Fingerprint(body []byte) bool {
+	if !bytes.Contains(body, []byte(geminiDeterministic429Message)) {
+		return false
+	}
+	return !bytes.Contains(body, []byte(`"details"`))
+}
+
+// isGeminiDeterministic429 汇总判断：只有 Gemini 模型 + 429 + 合成指纹才走短路/跳过冷却。
+func isGeminiDeterministic429(statusCode int, model string, body []byte) bool {
+	return statusCode == http.StatusTooManyRequests &&
+		isGeminiRequestModel(model) &&
+		isGeminiDeterministic429Fingerprint(body)
+}
+
 // isAntigravityConnectionError 判断是否为连接错误（网络超时、DNS 失败、连接拒绝）
 func isAntigravityConnectionError(err error) bool {
 	if err == nil {
@@ -1227,6 +1270,13 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 ) *handleModelRateLimitResult {
 	// 遵守自定义错误码策略：未命中则跳过所有限流处理
 	if !account.ShouldHandleErrorCode(statusCode) {
+		return nil
+	}
+	// 合成指纹 429：仅 Gemini 跳过模型/账号冷却。上游只是按 systemInstruction 字面拒绝，
+	// 不是配额或容量问题；若在这里写限流，会把一次请求放大成整个模型约 1 分钟不可用。
+	if isGeminiDeterministic429(statusCode, requestedModel, body) {
+		logger.LegacyPrintf("service.antigravity_gateway", "%s status=429 gemini_deterministic_429_skip_cooldown model=%s account=%d",
+			prefix, requestedModel, account.ID)
 		return nil
 	}
 	// 模型级限流处理（优先）
